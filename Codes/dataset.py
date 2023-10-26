@@ -23,6 +23,7 @@ class OneDDatasetBuilder(Dataset):
         sub_dir: Optional[str] = 'processed',
         data_names: Optional[Union[str, List[str], Tuple]] = 'all',
         time_names: Optional[Union[str, List[str], Tuple]] = 'all',
+        has_time_features: bool = 'True',
         data_type = torch.float32
     ):
         transform = None
@@ -30,6 +31,7 @@ class OneDDatasetBuilder(Dataset):
         pre_filter = None
         self.raw = raw_dir
         self.sub = sub_dir
+        self.has_time_features = has_time_features
         self.data_type = data_type
 
         self._set_data_names(data_names, raw_dir)
@@ -76,18 +78,28 @@ class OneDDatasetBuilder(Dataset):
             _file_name_outputs = [file_name_output(subject, time) for time in self.time_names]
             data_dict_output = read_1D_output(_file_name_outputs)
 
+            # Value of time steps
+            if self.has_time_features:
+                _total_time = 4.8
+                _n_time = len(self.time_names)
+                _time = (_total_time/(_n_time - 1)) * np.arange(start=0, stop=_n_time, step=1)
+                time = torch.tensor(_time).type(self.data_type).unsqueeze(0)
+            else: 
+                time = None
+
             # List of variables
             edge_index = torch.tensor(data_dict_input['edge_index']).type(torch.LongTensor)
             edge_attr = torch.tensor(data_dict_input['edge_attr']).type(self.data_type)
             node_attr = torch.tensor(data_dict_input['node_attr']).type(self.data_type)
             pressure = torch.tensor(data_dict_output['pressure']).type(self.data_type)
             flowrate = torch.tensor(data_dict_output['flowrate']).type(self.data_type)
+            
 
             # Convert node to edge
             # edge_attr = node_to_edge(edge_attr, edge_index)
 
             data = TorchGraphData(edge_index=edge_index, edge_attr=edge_attr,
-                node_attr=node_attr, pressure=pressure, flowrate=flowrate)
+                node_attr=node_attr, pressure=pressure, flowrate=flowrate, time=time)
             torch.save(data, self.processed_file_names[self.data_names.index(subject)])
 
 
@@ -189,7 +201,7 @@ class OneDDatasetLoader(Dataset):
             os.system(f'rm -rf {self.root}/{sub_dir}')
 
     @property
-    def batching_id(self, sub_dir='batched'):
+    def batching_id(self):
         ''' Map batched data index which is stored in batched dataset to original 
         data index which is stored in raw processed dataset.
         In case of dataset is batched (_sub_dir==/batched), return an array which index is
@@ -197,7 +209,7 @@ class OneDDatasetLoader(Dataset):
         In case of dataset is not batched, return zero tensor.
         '''
         try:
-            return torch.load(f'{self.root}/{sub_dir}/batched_id.pt')
+            return torch.load(f'{self.root}/{self.sub}/batched_id.pt')
         except:
             return torch.tensor(0)
 

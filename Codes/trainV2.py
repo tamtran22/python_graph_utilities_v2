@@ -73,7 +73,7 @@ def train(model, data : TorchGraphData, args):
     #       args.criterion(P_true[:,1:], torch.zeros_like(P_true[:,1:])))
 
     with torch.no_grad():
-        loss_true = unsteady_loss(
+        loss_true = unsteady(
             P = message_net(P_true, edge_index, message = lambda a,b: a-b),
             Q = message_net(Q_true, edge_index, message = lambda a,b: a-b),
             L = L,
@@ -148,24 +148,25 @@ def eval(model, data, args):
 
 
 
-def kinematic_loss(
-    P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
+def kinematic(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
 ):
     Kin = (16*K*rho) / ((pi**2) * D * D * D * D)
     loss = torch.transpose(torch.mul(torch.transpose(Q[:,:-1]*Q[:,:-1], 0, 1), Kin), 0, 1)
 
     return loss
 
-def unsteady_loss(
-    P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1., dt:float=0.1
+def unsteady(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1., dt:float=0.1
 ):
     Uns = (4*rho*L) / (pi * D * D)
     loss = (1./dt) * torch.transpose(torch.mul(torch.transpose(Q[:,1:]-Q[:,:-1],0,1),Uns),0,1)
     return loss
 
-def viscous_loss(
-    P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
+def viscous(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
 ):
     Vis = (128*mu*L) / (pi * D * D * D * D)
     loss = torch.transpose(torch.mul(torch.transpose(Q[:,1:], 0, 1), Vis), 0, 1)
     return loss
+
+def boundary_loss(
+):
+    pass

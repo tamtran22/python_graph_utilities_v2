@@ -130,6 +130,138 @@ class MeshGraphNet(gnn.MessagePassing):
 
 
 
+class RecurrentMeshGraphNet(gnn.MessagePassing):
+    r"""MeshGraphNet-based
+    params:
+        node_in : (size of input node feature, flag to use node encoder)
+        node_out : (size of output node feature, flag to use node decoder)
+        node_in : (size of input edge feature, flag to use edge encoder)
+        node_in : (size of output edge feature, flag to use edge decoder)
+    """
+    def __init__(self,
+        node_in : Tuple[int, bool] = (0, False),
+        node_out : Tuple[int, bool] = (0, False), 
+        edge_in : Tuple[int, bool] = (0, False),
+        edge_out : Tuple[int, bool] = (0, False),
+        hidden_size : int = 128,
+        n_hiddens : int = 10,
+        aggregation : str = 'sum'
+        ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.n_hiddens = n_hiddens
+        self.aggregation = aggregation
+
+        # Node encoder ################################
+        if not node_in[1]:
+            self.node_encoder = None
+            _node_encoder_out_size = node_in[0]
+        else:
+            self.node_in_size = node_in[0]
+            self.node_encoder = nn.Sequential(
+                nn.Linear(self.node_in_size, self.hidden_size),
+                nn.LayerNorm(self.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size, self.hidden_size)
+            )
+            _node_encoder_out_size = self.hidden_size
+
+        # Node decoder #################################
+        # node mlp
+        if not node_out[1]:
+            self.node_decoder = None
+        else:
+            self.node_out_size = node_out[0]
+            self.node_decoder = nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size, self.node_out_size)
+            )
+        
+        # Edge encoder #################################
+        if not edge_in[1]:
+            self.edge_encoder = None
+            _edge_encoder_out_size = edge_in[0]
+        else:
+            self.edge_in_size = edge_in[0]
+            self.edge_encoder = nn.Sequential(
+                nn.Linear(self.edge_in_size, self.hidden_size),
+                nn.LayerNorm(self.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size, self.hidden_size)
+            )
+            _edge_encoder_out_size = self.hidden_size
+        
+        # Edge decoder #################################
+        if not edge_out[1]:
+            self.edge_decoder = None
+        else:
+            self.edge_out_size = edge_out[0]
+            self.edge_decoder = nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size, self.edge_out_size)
+            )
+
+        # Edge mlp #####################################
+        self.edge_mlp = nn.RNN(
+            input_size=2*_node_encoder_out_size+_edge_encoder_out_size,
+            hidden_size=self.hidden_size,
+            num_layers=self.n_hiddens,
+            dropout=0.1
+        )
+        
+    def forward(self, x, edge_index, edge_attr : OptTensor = None,
+                hx : Optional[Tensor] = None, size = None):
+
+        if self.node_encoder is not None:
+            x = self.node_encoder(x)
+
+        if (self.edge_encoder is not None) and (edge_attr is not None):
+            edge_attr = self.edge_encoder(edge_attr)
+        
+        # if hidden_edge_features is None:
+        #     hidden_edge_features = torch.zeros((edge_attr.size(0), self.hidden_size)).float()
+        #     cell_edge_features = torch.zeros((edge_attr.size(0), self.hidden_size)).float()
+        # print(hidden_edge_features.size(), cell_edge_features.size())
+
+        updated_nodes, updated_edges, hx = self.propagate(
+            edge_index,
+            x = x,
+            edge_attr = edge_attr,
+            hx = hx,
+            size = size
+        )
+
+        if self.node_decoder is not None:
+            updated_nodes = self.node_decoder(updated_nodes)
+
+        if self.edge_decoder is not None:
+            updated_edges = self.edge_decoder(updated_edges)
+        
+        return updated_nodes, updated_edges, hx.detach()
+    
+    def message(self, x_i, x_j, edge_attr : OptTensor = None, hx : OptTensor=None):
+        updated_edges = torch.cat([x_i, x_j], dim=1)
+        if edge_attr is not None:
+            updated_edges = torch.cat([updated_edges, edge_attr], dim=1)
+            # updated_edges = edge_attr + self.edge_mlp(updated_edges) # skip connection
+            updated_edges, hx = self.edge_mlp(
+                input=updated_edges, hx=hx)
+        else:
+            updated_edges, hx = self.edge_mlp(
+                input=updated_edges, hx=hx)
+        return updated_edges, hx
+    
+    def aggregate(self, updated_edges, edge_index, dim_size = None):
+        node_dim = 0
+        updated_edges, hx = updated_edges
+        updated_nodes = torch_scatter.scatter(updated_edges, edge_index[1,:],
+                                            dim=node_dim, reduce = self.aggregation)
+        return updated_nodes, updated_edges, hx
+
+
+
 class LSTMMeshGraphNet(gnn.MessagePassing):
     r"""MeshGraphNet-based
     params:
@@ -284,7 +416,7 @@ class PARC(nn.Module):
         self.n_bcfields = n_bcfields
         self.n_hiddens = n_hiddens
 
-        self.derivative_solver = LSTMMeshGraphNet(
+        self.derivative_solver = RecurrentMeshGraphNet(
             node_in=(self.n_fields + self.n_bcfields, True),
             edge_in=(self.n_hiddenfields, False),
             node_out=(self.n_fields, True),
@@ -366,6 +498,7 @@ class PARC(nn.Module):
 
 
 
+# Node features to edge features
 class MessageNet(gnn.MessagePassing):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -382,3 +515,26 @@ class MessageNet(gnn.MessagePassing):
     
     def aggregate(self, updated_edges, edge_index, dim_size = None):
         return updated_edges
+
+
+
+# Edge features to node features
+class AggregateNet(gnn.MessagePassing):
+    def __init__(self, aggregation = 'sum', **kwargs):
+        self.aggregation = aggregation
+        super().__init__(**kwargs)
+
+    def forward(self, input, edge_index):
+        return self.propagate(
+            edge_index,
+            input = input
+        )
+
+    def message(self, input):
+        return input
+    
+    def aggregate(self, updated_edges, edge_index, dim_size = None):
+        node_dim = 0
+        updated_nodes = torch_scatter.scatter(updated_edges, edge_index[1,:],
+                                            dim=node_dim, reduce = self.aggregation)
+        return updated_nodes

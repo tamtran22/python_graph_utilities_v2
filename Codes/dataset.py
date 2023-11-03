@@ -79,13 +79,13 @@ class OneDDatasetBuilder(Dataset):
             data_dict_output = read_1D_output(_file_name_outputs)
 
             # Value of time steps
-            if self.has_time_features:
-                _total_time = 4.8
-                _n_time = len(self.time_names)
-                _time = (_total_time/(_n_time - 1)) * np.arange(start=0, stop=_n_time, step=1)
-                time = torch.tensor(_time).type(self.data_type).unsqueeze(0)
-            else: 
-                time = None
+            # if self.has_time_features:
+            #     _total_time = 4.8
+            #     _n_time = len(self.time_names)
+            #     _time = (_total_time/(_n_time - 1)) * np.arange(start=0, stop=_n_time, step=1)
+            #     time = torch.tensor(_time).type(self.data_type).unsqueeze(0)
+            # else: 
+            #     time = None
 
             # List of variables
             edge_index = torch.tensor(data_dict_input['edge_index']).type(torch.LongTensor)
@@ -93,13 +93,15 @@ class OneDDatasetBuilder(Dataset):
             node_attr = torch.tensor(data_dict_input['node_attr']).type(self.data_type)
             pressure = torch.tensor(data_dict_output['pressure']).type(self.data_type)
             flowrate = torch.tensor(data_dict_output['flowrate']).type(self.data_type)
+            is_terminal = torch.tensor(data_dict_input['is_terminal']).type(torch.LongTensor)
             
 
             # Convert node to edge
             # edge_attr = node_to_edge(edge_attr, edge_index)
 
             data = TorchGraphData(edge_index=edge_index, edge_attr=edge_attr,
-                node_attr=node_attr, pressure=pressure, flowrate=flowrate, time=time)
+                node_attr=node_attr, pressure=pressure, flowrate=flowrate, 
+                is_terminal=is_terminal)
             torch.save(data, self.processed_file_names[self.data_names.index(subject)])
 
 
@@ -314,10 +316,16 @@ class OneDDatasetLoader(Dataset):
 
 def read_1D_input(
         file_name : str,
+        # var_dict = {
+        #     'node_attr' : ['x_end', 'y_end', 'z_end'], 
+        #     'edge_index' : ['PareID', 'ID'], 
+        #     'edge_attr' : ['Length', 'Diameter', 'Gene', 'Lobe', 'Flag', 'Vol0', 'Vol1', 'Vol1-0']
+        # },
         var_dict = {
             'node_attr' : ['x_end', 'y_end', 'z_end'], 
             'edge_index' : ['PareID', 'ID'], 
-            'edge_attr' : ['Length', 'Diameter', 'Gene', 'Lobe', 'Flag', 'Vol0', 'Vol1', 'Vol1-0']
+            'edge_attr' : ['Length', 'Diameter', 'Gene', 'Lobe', 'Vol0', 'Vol1', 'Vol1-0'],
+            'is_terminal' : ['Flag']
         },
         # var_dict = {
         #     'node_attr' : ['x_end', 'y_end', 'z_end', 'Length', 'Diameter', 'Gene', 'Lobe', 'Flag', 'Vol0', 'Vol1'], 
@@ -335,7 +343,8 @@ def read_1D_input(
     """
     # print(var_dict)
     def _float(str):
-        _dict = {'C':0, 'P':1, 'E':2, 'G':3, 'T':4}
+        # _dict = {'C':0, 'P':1, 'E':2, 'G':3, 'T':4}
+        _dict = {'C':0, 'P':0, 'E':0, 'G':0, 'T':1}
         try:
             return float(str)
         except:
@@ -385,9 +394,13 @@ def read_1D_input(
         out_dict[var] = []
         for data_var in var_dict[var]:
             out_dict[var].append(data_dict[data_var])
+        if len(out_dict[var]) == 1:
+            out_dict[var] = out_dict[var][0]
     out_dict['edge_index'] = np.array(out_dict['edge_index'], dtype=np.int32)
     out_dict['edge_attr'] = np.array(out_dict['edge_attr'], dtype=np.float32).transpose()
     out_dict['node_attr'] = edge_to_node(np.array(out_dict['node_attr'], dtype=np.float32).transpose(),
+                                        out_dict['edge_index'])
+    out_dict['is_terminal'] = edge_to_node(np.array(out_dict['is_terminal'], dtype=int).transpose(),
                                         out_dict['edge_index'])
     return out_dict
 

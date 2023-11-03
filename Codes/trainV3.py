@@ -1,5 +1,7 @@
 import torch
 from data import TorchGraphData
+from networks_lstm import MessageNet
+import torch.nn.functional as F
 
 def train(model, data : TorchGraphData, args):
 
@@ -14,10 +16,9 @@ def train(model, data : TorchGraphData, args):
     )], dim=1).to(args.device)
     
     ## Mesh features: Tuple(NodeTensor, EdgeTensor)
-    mesh_features = (
-        data.node_attr.to(args.device).float(),            
-        torch.cat([data.edge_attr.to(args.device).float()]*2,dim=0)
-    )
+    node_attr = data.node_attr.to(args.device).float()           
+    edge_attr = torch.cat([data.edge_attr.to(args.device).float()]*2,dim=0)
+    mesh_features = (node_attr, edge_attr)
     
     ## Fields tensor(pressure, flowrate): Tensor(n_nodes, n_times, n_fields)
     F_initial = torch.cat([
@@ -31,7 +32,7 @@ def train(model, data : TorchGraphData, args):
     F_bc = F_bc.to(args.device).float()
 
     ## Predict output
-    Fs, F_dots = model(
+    Fs, _ = model(
         F_initial=F_initial, 
         mesh_features=mesh_features, 
         edge_index=edge_index, 
@@ -46,7 +47,24 @@ def train(model, data : TorchGraphData, args):
     ], dim=-1).to(args.device).float() # concat pressure and flowrate
     Fs_hat = Fs_hat[:,1:,:]
     
-    ## Ground truth Fields time derivative tensor
+    ## Boundary condition
+    
+
+    # ## PINN
+    # message_net = MessageNet().to(args.device)
+    # P_pred = torch.cat([F_initial[:,0].unsqueeze(1), Fs[:,:,0]], dim=1)
+    # Q_pred = torch.cat([F_initial[:,1].unsqueeze(1), Fs[:,:,1]], dim=1)
+    # P_pred = message_net(P_pred, edge_index)
+    # Q_pred = message_net(Q_pred, edge_index)
+    
+    # L = edge_attr[:,0]
+    # D = edge_attr[:,1]
+
+    # kin_pred = kinematic(P = P_pred,Q= Q_pred,L= L,D= D)
+    # vis_pred = viscous(P=P_pred,Q= Q_pred,L= L,D= D)
+    # uns_pred = unsteady(P=P_pred,Q= Q_pred,L= L,D= D, dt=timestep)
+    
+
 
     ## Loss function
     loss = args.criterion(Fs_hat, Fs)
@@ -110,3 +128,29 @@ def eval(model, data, args):
         loss = args.criterion(Fs_hat, Fs)
 
     return loss.item()
+
+
+
+
+def kinematic(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
+):
+    Kin = (16*K*rho) / ((pi**2) * D * D * D * D)
+    loss = torch.transpose(torch.mul(torch.transpose(Q[:,:-1]*Q[:,:-1], 0, 1), Kin), 0, 1)
+
+    return loss
+
+def unsteady(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1., dt:float=0.1
+):
+    Uns = (4*rho*L) / (pi * D * D)
+    loss = (1./dt) * torch.transpose(torch.mul(torch.transpose(Q[:,1:]-Q[:,:-1],0,1),Uns),0,1)
+    return loss
+
+def viscous(P, Q, L, D, rho: float = 1.12, pi: float = 3.1415926, mu: float = 1.64E-5, K: float = 1.
+):
+    Vis = (128*mu*L) / (pi * D * D * D * D)
+    loss = torch.transpose(torch.mul(torch.transpose(Q[:,1:], 0, 1), Vis), 0, 1)
+    return loss
+
+def boundary_loss(
+):
+    pass

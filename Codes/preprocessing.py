@@ -13,7 +13,7 @@ def get_graph_partition(
     data : TorchGraphData,
     partition : np.array,
     recursive : bool,
-    list_of_node_features = ['node_attr', 'pressure', 'flowrate', 'flowrate_bc'],
+    list_of_node_features = ['node_attr', 'pressure', 'flowrate', 'flowrate_bc', 'is_terminal'],
     list_of_edge_features = ['edge_attr']
 ) -> TorchGraphData:
     '''

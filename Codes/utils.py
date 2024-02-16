@@ -7,7 +7,10 @@ import torch_scatter
 from typing import Callable
 
 class NodeToEdgeLayer(gnn.MessagePassing):
-    def __init__(self, message: Callable, **kwargs):
+    def __init__(self,
+        message: Callable = lambda a, b : b,
+        **kwargs
+    ):
         self._message = message
         super().__init__(**kwargs)
     
@@ -21,7 +24,10 @@ class NodeToEdgeLayer(gnn.MessagePassing):
         return inputs
 
 class EdgeToNodeLayer(gnn.MessagePassing):
-    def __init__(self, aggregation='sum', **kwargs):
+    def __init__(self, 
+        aggregation='sum', 
+        **kwargs
+    ):
         self.aggregation = aggregation
         super().__init__(**kwargs)
     

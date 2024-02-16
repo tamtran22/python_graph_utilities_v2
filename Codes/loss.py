@@ -16,11 +16,10 @@ def kinematic_loss(data: TorchGraphData) -> Tensor:
 
     Kin = (16*K*rho) / ((pi**2)*torch.square(torch.square(diam)))
     loss = torch.einsum('i, ij->ij', Kin, torch.square(Q))
-    return loss
+    return torch.mean(loss)
 
 def viscous_loss(data: TorchGraphData) -> Tensor:
-    node_to_edge = NodeToEdgeLayer()
-
+    node_to_edge = NodeToEdgeLayer(message=lambda a,b: a-b)
     Q = node_to_edge(data.flowrate, data.edge_index) # edge wise Q
     mu = data.vis
     pi = 3.1415926
@@ -29,10 +28,10 @@ def viscous_loss(data: TorchGraphData) -> Tensor:
 
     Vis = (128*mu*length) / (pi * torch.square(torch.square(diam)))
     loss = torch.einsum('i, ij->ij', Vis, Q)
-    return loss
+    return torch.mean(loss)
 
 def unsteady_loss(data: TorchGraphData) -> Tensor:
-    node_to_edge = NodeToEdgeLayer()
+    node_to_edge = NodeToEdgeLayer(message=lambda a,b: a-b)
     Q = node_to_edge(data.flowrate, data.edge_index)
     mu = data.vis
     rho = data.rho
@@ -44,7 +43,12 @@ def unsteady_loss(data: TorchGraphData) -> Tensor:
     Uns = (4*rho*length) / (pi * torch.square(diam))
     delta_Q = Q[:,1:] - Q[:,0:-1]
     loss = torch.einsum('i, ij->ij',Uns / timestep,delta_Q)
-    return loss
+    return torch.mean(loss)
+
+def pressure_loss(data: TorchGraphData) -> Tensor:
+    node_to_edge = NodeToEdgeLayer(message=lambda a,b: a-b)
+    loss = node_to_edge(data.pressure, data.edge_index)
+    return torch.mean(loss)
 
 
 
@@ -56,4 +60,5 @@ class OneDAirwayLoss(nn.Module):
         loss = kinematic_loss(input_data)
         loss += viscous_loss(input_data)
         loss += unsteady_loss(input_data)
+        loss += pressure_loss(input_data)
         return torch.mean(loss)

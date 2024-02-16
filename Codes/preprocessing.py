@@ -13,7 +13,8 @@ def get_graph_partition(
     data : TorchGraphData,
     partition : np.array,
     recursive : bool,
-    list_of_node_features = ['node_attr', 'pressure', 'flowrate', 'flowrate_bc', 'is_terminal'],
+    list_of_node_features = ['node_attr', 'pressure', 'flowrate', 'flowrate_bc', \
+                            'is_terminal', 'time', 'pressure_dot', 'flowrate_dot'],
     list_of_edge_features = ['edge_attr']
 ) -> TorchGraphData:
     '''
@@ -61,7 +62,8 @@ def get_graph_partition(
 def get_time_partition(
     data : TorchGraphData,
     time_partition : np.array,
-    list_of_time_features = ['pressure', 'flowrate', 'velocity', 'flowrate_bc', 'pressure_dot', 'flowrate_dot', 'time']
+    list_of_time_features = ['pressure', 'flowrate', 'velocity', 
+                            'flowrate_bc', 'pressure_dot', 'flowrate_dot', 'time']
 ) -> TorchGraphData:
     partition_data = TorchGraphData()
     for key in data._store:
@@ -194,3 +196,32 @@ def dataset_split_to_loader(
     for subset in subset_ids:
         subsets.append(DataLoader([dataset[i] for i in subset_ids[subset]], batch_size=n_datas_per_batch))
     return tuple(subsets)
+
+
+#####################################################################################
+def cal_deriv_F(F, step, dim=1):
+    if isinstance(F, torch.Tensor):
+        F = F.numpy()
+    if dim >= len(np.shape(F)):
+        return None
+    _F = np.swapaxes(F, 0, dim)
+
+    _F_dot = []
+    for i in range(0, _F.shape[0]-1):
+        _F_dot.append(np.expand_dims((_F[i] - _F[i-1])/step, 0))
+    _F_dot.append(np.expand_dims((_F[-1] - _F[-2])/step, 0))
+
+    _F_dot = np.concatenate(_F_dot, axis=0)
+    _F_dot = np.swapaxes(_F_dot, dim, 0)
+    return _F_dot
+
+
+######################################################################################
+def cut_branch(data: TorchGraphData, max_gen: int):
+    
+    gen = data.edge_attr.numpy()[:,2]
+    remain_edge = np.where(gen <= max_gen)[0] # branch id after cutting
+    remain_node = data.edge_index.numpy()[:,remain_edge]
+    remain_node = np.unique(np.concatenate([remain_node[0], remain_node[1]], axis=0))
+    
+    return get_graph_partition(data, remain_node, recursive=False)

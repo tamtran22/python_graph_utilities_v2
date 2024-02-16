@@ -68,6 +68,8 @@ class OneDDatasetBuilder(Dataset):
             f'/{CFD_1D_dir}/Output_{subject}_Amount_St_whole.dat'
         file_name_output = lambda subject, time : f'{self.raw}/{subject}'+\
             f'/{CFD_1D_dir}/data_plt_nd/plt_nd_000{time}.dat'
+        file_name_sh = lambda subject : f'{self.raw}/{subject}'+\
+            f'/{CFD_1D_dir}/pres_flow_lung.sh'
 
         # Read data
         for subject in self.data_names:
@@ -77,31 +79,46 @@ class OneDDatasetBuilder(Dataset):
 
             _file_name_outputs = [file_name_output(subject, time) for time in self.time_names]
             data_dict_output = read_1D_output(_file_name_outputs)
+            data_dict_sh = read_sh_file(file_name_sh(subject))
 
             # Value of time steps
-            # if self.has_time_features:
-            #     _total_time = 4.8
-            #     _n_time = len(self.time_names)
-            #     _time = (_total_time/(_n_time - 1)) * np.arange(start=0, stop=_n_time, step=1)
-            #     time = torch.tensor(_time).type(self.data_type).unsqueeze(0)
-            # else: 
-            #     time = None
+            if self.has_time_features:
+                _total_time = 4.8
+                _n_time = len(self.time_names)
+                _time = (_total_time/(_n_time - 1)) * np.arange(start=0, stop=_n_time, step=1)
+                
+                time = torch.tensor(_time).type(self.data_type).unsqueeze(0)
+            else: 
+                time = None
 
             # List of variables
             edge_index = torch.tensor(data_dict_input['edge_index']).type(torch.LongTensor)
             edge_attr = torch.tensor(data_dict_input['edge_attr']).type(self.data_type)
+            # edge_attr = None
             node_attr = torch.tensor(data_dict_input['node_attr']).type(self.data_type)
             pressure = torch.tensor(data_dict_output['pressure']).type(self.data_type)
             flowrate = torch.tensor(data_dict_output['flowrate']).type(self.data_type)
-            is_terminal = torch.tensor(data_dict_input['is_terminal']).type(torch.LongTensor)
-            
 
-            # Convert node to edge
-            # edge_attr = node_to_edge(edge_attr, edge_index)
+            pressure_dot = torch.tensor(cal_deriv_F(pressure, 4.0/200)).type(self.data_type)
+            flowrate_dot = torch.tensor(cal_deriv_F(flowrate, 4.0/200)).type(self.data_type)
+
+            _global_attr = torch.tensor(data_dict_sh['global_attr']).type(self.data_type)
+            _global_attr = torch.cat([_global_attr.unsqueeze(0)]*edge_attr.size(0),dim=0)
+            edge_attr = torch.cat([edge_attr, _global_attr], dim=1)
+
+            if self.has_time_features:
+                timestep = 4.0 / (len(self.time_names) - 1)
+                time = torch.zeros(pressure.size()).type(self.data_type)
+                for i in range(len(self.time_names)):
+                    time[:,i] = i * timestep
 
             data = TorchGraphData(edge_index=edge_index, edge_attr=edge_attr,
-                node_attr=node_attr, pressure=pressure, flowrate=flowrate, 
-                is_terminal=is_terminal)
+                node_attr=node_attr, pressure=pressure, flowrate=flowrate, pressure_dot=pressure_dot,
+                flowrate_dot=flowrate_dot)
+            for key in data_dict_sh:
+                if key == 'global_attr':
+                    continue
+                setattr(data, key, torch.tensor(data_dict_sh[key]).type(self.data_type))
             torch.save(data, self.processed_file_names[self.data_names.index(subject)])
 
 
@@ -225,7 +242,7 @@ class OneDDatasetLoader(Dataset):
         if axis is None:
             var = var.flatten().unsqueeze(1)
         if scaler_type=='minmax_scaler':
-            scaler = MinMaxScaler()
+            scaler = MinMaxScaler(feature_range=(-1,1))
             scaler.fit(var)
             return scaler
         if scaler_type=='standard_scaler':
@@ -304,7 +321,28 @@ class OneDDatasetLoader(Dataset):
         _scaler = pickle.load(_file_picle)
         _file_picle.close()
         return _scaler
+    
+    def cut_branch(self, 
+        sub_dir='cutted',
+        max_gen=10
+    ):
+        ''' P.
+        sub_dir : sub folder to store cutted dataset.
+        sc
+        '''
+        self._clean_sub_dir(sub_dir)
+        os.system(f'mkdir {self.root}/{sub_dir}')
+
+        if self.len() <= 0:
+            return self
         
+        ### Normalized data
+        for i in range(self.len()):
+            data = self.__getitem__(i)
+            cutted_data = cut_branch(data, max_gen=max_gen)
+            
+            torch.save(cutted_data, f'{self.root}/{sub_dir}/{self.data_names[i]}.pt')
+        return OneDDatasetLoader(root_dir=self.root, sub_dir=sub_dir)
 
 
 
@@ -325,10 +363,11 @@ def read_1D_input(
             'node_attr' : ['x_end', 'y_end', 'z_end'], 
             'edge_index' : ['PareID', 'ID'], 
             'edge_attr' : ['Length', 'Diameter', 'Gene', 'Lobe', 'Vol0', 'Vol1', 'Vol1-0'],
-            'is_terminal' : ['Flag']
         },
         # var_dict = {
-        #     'node_attr' : ['x_end', 'y_end', 'z_end', 'Length', 'Diameter', 'Gene', 'Lobe', 'Flag', 'Vol0', 'Vol1'], 
+        #     'node_attr' : ['x_end', 'y_end', 'z_end', 'Length', 'Diameter', \
+        #                    'Gene', 'Lobe', 'Flag', 'Vol0', 'Vol1', 'Vol1-0',], 
+        #                     #'Vol0-fraction', 'Vol1-fraction', 'Vol1-0-fraction',], 
         #     'edge_index' : ['PareID', 'ID']
         # }
     ):
@@ -341,7 +380,7 @@ def read_1D_input(
     (---------information of ith branch----------)
     -  -      -      -        ... -      -    -
     """
-    # print(var_dict)
+    # change node type to int
     def _float(str):
         # _dict = {'C':0, 'P':1, 'E':2, 'G':3, 'T':4}
         _dict = {'C':0, 'P':0, 'E':0, 'G':0, 'T':1}
@@ -351,22 +390,19 @@ def read_1D_input(
             return _dict[str]
     _vectorized_float = np.vectorize(_float)
 
+    # read file
     file = open(file_name, 'r')
-    # Read header
     header = file.readline()
-    # Read data
     data = file.read()
-    # Done reading file
     file.close()
 
-    # Process header
+    # Process header, read number of variables
     vars = header.replace('\n',' ')
     vars = vars.split(' ')
     vars = list(filter(None, vars))
-
     n_var = len(vars)
 
-    # Process data
+    # Process data, split column and row
     data = data.replace('\n',' ')
     data = data.split(' ')
     data = list(filter(None, data))
@@ -376,19 +412,12 @@ def read_1D_input(
     for i in range(len(vars)):
         data_dict[vars[i]] = _vectorized_float(data[i])
     
-    # Rearange data
-    data_dict['x_end'] = np.insert(data_dict['x_end'], 0, data_dict['x_start'][0])
-    data_dict['y_end'] = np.insert(data_dict['y_end'], 0, data_dict['y_start'][0])
-    data_dict['z_end'] = np.insert(data_dict['z_end'], 0, data_dict['z_start'][0])
-
-    # Scaling data - cubic root of volume
-    if data_dict['Vol0'] is not None:
-        data_dict['Vol0'] = np.cbrt(data_dict['Vol0']) 
-    if data_dict['Vol1'] is not None:
-        data_dict['Vol1'] = np.cbrt(data_dict['Vol1']) 
-    if data_dict['Vol1-0'] is not None:
-        data_dict['Vol1-0'] = np.cbrt(data_dict['Vol1-0']) 
-
+    # Calculate volume fraction
+    data_dict['Vol0-fraction'] = data_dict['Vol0'] / np.sum(data_dict['Vol0'])
+    data_dict['Vol1-fraction'] = data_dict['Vol1'] / np.sum(data_dict['Vol1'])
+    data_dict['Vol1-0-fraction'] = data_dict['Vol1-0'] / np.sum(data_dict['Vol1-0'])
+    
+    # Store output variables
     out_dict = {}
     for var in var_dict:
         out_dict[var] = []
@@ -396,12 +425,20 @@ def read_1D_input(
             out_dict[var].append(data_dict[data_var])
         if len(out_dict[var]) == 1:
             out_dict[var] = out_dict[var][0]
+
+    # Reshape and update output variables
+    
     out_dict['edge_index'] = np.array(out_dict['edge_index'], dtype=np.int32)
+
+    out_dict['node_attr'] = edge_to_node(np.array(out_dict['node_attr'],\
+                            dtype=np.float32).transpose(), out_dict['edge_index'])
+    
     out_dict['edge_attr'] = np.array(out_dict['edge_attr'], dtype=np.float32).transpose()
-    out_dict['node_attr'] = edge_to_node(np.array(out_dict['node_attr'], dtype=np.float32).transpose(),
-                                        out_dict['edge_index'])
-    out_dict['is_terminal'] = edge_to_node(np.array(out_dict['is_terminal'], dtype=int).transpose(),
-                                        out_dict['edge_index'])
+    
+    out_dict['node_attr'][0,0] = data_dict['x_start'][0] #
+    out_dict['node_attr'][0,1] = data_dict['y_start'][0] # Insert entrance node
+    out_dict['node_attr'][0,2] = data_dict['z_start'][0] #
+
     return out_dict
 
 def read_1D_output(
@@ -493,3 +530,59 @@ def edge_to_node(edge_attr, edge_index):
     root = np.where(is_child == False)[0][0]
     node_attr[edge_index[0][root]] = edge_attr[root]
     return node_attr
+
+class ShellScriptReader():
+    def __init__(self, file_name = None, read_mode = 'r+') -> None:
+        self._file = None
+        if file_name is not None:
+            self.open(file_name, read_mode)
+    def open(self, file_name, read_mode):
+        if self._file is not None:
+            self._file.close()
+        self._file = open(file_name, read_mode)
+    def close(self):
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+    def read(self):
+        if self._file is None:
+            pass
+        file_str = self._file.read()
+        lines = file_str.split('\n')
+
+        file_dict = {}
+        for i in range(len(lines)):
+            lines[i] = lines[i].split('#')[0]
+            lines[i] = lines[i].replace(' ','')
+                
+            line = lines[i].split('=')
+            if len(line) == 2:
+                file_dict[line[0]] = line[1]
+        return file_dict
+
+def read_sh_file(
+    file_name: str='./pres_flow_lung.sh',
+    var_dict = {
+        'global_attr': ['v_TLC', 'v_FRC', 'v_tidal', 'gender', 'age', 'height', 'acoef', 'bcoef'],
+        'total_time': ['tperiod'],
+        'rho': ['rhog'],
+        'vis': ['visg'],
+    }
+):
+    r'''read pres_flow_lung.sh file'''
+    reader = ShellScriptReader(file_name=file_name, read_mode='r+')
+    data_dict = reader.read()
+    reader.close()
+    out_dict = {}
+    
+    # Store output variables
+    out_dict = {}
+    for var in var_dict:
+        out_dict[var] = []
+        for data_var in var_dict[var]:
+            out_dict[var].append(float(data_dict[data_var].replace('d','E')))
+        # if len(out_dict[var]) == 1:
+        #     out_dict[var] = out_dict[var][0]
+        out_dict[var] = np.array(out_dict[var])
+    return out_dict
+

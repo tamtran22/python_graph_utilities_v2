@@ -1,7 +1,7 @@
 import numpy as np
 from data import TorchGraphData
 import torch
-import nxmetis
+# import nxmetis
 from typing import List, Union
 from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
@@ -87,17 +87,17 @@ def get_batch_graphs(
     # Graph partitioning
     temp_list_of_partitions = []
     if batch_size is not None:
-        if batch_size <= 100:
-            list_of_partitions = BFS_partition(
-                edge_index=data.edge_index.numpy(),
-                partition_size=batch_size,
-                threshold=0.3
-            )
-        else:
-            (_, list_of_partitions) = nxmetis.partition(
-                G=data.graph,
-                nparts=int(data.number_of_nodes / batch_size)
-            )
+        # if batch_size <= 100:
+        list_of_partitions = BFS_partition(
+            edge_index=data.edge_index.numpy(),
+            partition_size=batch_size,
+            threshold=0.3
+        )
+        # else:
+        #     (_, list_of_partitions) = nxmetis.partition(
+        #         G=data.graph,
+        #         nparts=int(data.number_of_nodes / batch_size)
+        #     )
         for partition in list_of_partitions:
             temp_list_of_partitions.append(get_graph_partition(data, partition, recursive))
     else:

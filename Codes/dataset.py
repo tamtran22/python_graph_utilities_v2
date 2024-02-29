@@ -63,7 +63,7 @@ class OneDDatasetBuilder(Dataset):
     
     def process(self):
         # Declare data file name
-        CFD_1D_dir = 'CFD_1D'
+        CFD_1D_dir = 'CFD_1D_dynamic'
         file_name_input = lambda subject : f'{self.raw}/{subject}'+\
             f'/{CFD_1D_dir}/Output_{subject}_Amount_St_whole.dat'
         file_name_output = lambda subject, time : f'{self.raw}/{subject}'+\
@@ -107,7 +107,7 @@ class OneDDatasetBuilder(Dataset):
             edge_attr = torch.cat([edge_attr, _global_attr], dim=1)
 
             if self.has_time_features:
-                timestep = 4.0 / (len(self.time_names) - 1)
+                timestep =  data_dict_sh['total_time']/ (len(self.time_names) - 1)
                 time = torch.zeros(pressure.size()).type(self.data_type)
                 for i in range(len(self.time_names)):
                     time[:,i] = i * timestep

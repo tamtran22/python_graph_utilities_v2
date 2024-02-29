@@ -20,7 +20,7 @@ class NodeToEdgeLayer(gnn.MessagePassing):
     def message(self, x_i: Tensor, x_j: Tensor) -> Tensor:
         return self._message(x_i, x_j)
     
-    def aggregate(self, inputs: Tensor, index: Tensor = None) -> Tensor:
+    def aggregate(self, inputs: Tensor) -> Tensor:
         return inputs
 
 class EdgeToNodeLayer(gnn.MessagePassing):
